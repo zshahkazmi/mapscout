@@ -1,0 +1,9 @@
+state files and outputs
+*.tmp
+__pycache__/
+*.pyc
+mapscout_state.json
+directory.csv
+queries.csv
+sa-key.json
+*service-account*.json

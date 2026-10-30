@@ -105,37 +105,44 @@ def run_sheet(store: SheetStore, queries: list[dict], cfg: ScrapeConfig,
     todo = [q for q in queries if q["key"] not in done]
     if max_queries:
         todo = todo[:max_queries]
-    summary = {"queries_done": 0, "found": 0, "added": 0, "blocked": False}
+    summary = {"queries_done": 0, "found": 0, "added": 0, "blocked": False,
+               "failed": 0}
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    consecutive_failures = 0
     with MapsScraper(cfg) as scraper:
         for q in todo:
             try:
                 records = scraper.scrape_query(q["query"])
+                new = []
+                for rec in records:
+                    rec.query = q["query"]
+                    rec.locality = q.get("locality", "")
+                    rec.niche = q.get("niche", "")
+                    rec.scraped_at = stamp
+                    if rec.place_key and rec.place_key not in seen:
+                        seen.add(rec.place_key)
+                        new.append(rec)
+                store.append_directory(new)
+                store.append_progress({**q, "found": len(records),
+                                       "added": len(new), "scraped_at": stamp})
             except BlockedError as e:
                 log(f"BLOCKED during '{q['query']}': {e} — stopping cleanly; "
                     "the next scheduled run resumes.")
                 summary["blocked"] = True
                 break
             except Exception as e:
-                summary["failed"] = summary.get("failed", 0) + 1
+                # ANY failure in a query (scrape or sheet write) must not
+                # kill the run: the query stays un-done and is retried by
+                # a later run; three in a row ends this run early.
+                summary["failed"] += 1
+                consecutive_failures += 1
                 log(f"ERROR during '{q['query']}': {type(e).__name__}: {e} — "
                     "query NOT marked done; continuing with the next one.")
-                if summary["failed"] >= 3 and summary["queries_done"] == 0:
-                    log("3 failures before any success — stopping the run.")
+                if consecutive_failures >= 3:
+                    log("3 failures in a row — stopping the run.")
                     break
                 continue
-            new = []
-            for rec in records:
-                rec.query = q["query"]
-                rec.locality = q.get("locality", "")
-                rec.niche = q.get("niche", "")
-                rec.scraped_at = stamp
-                if rec.place_key and rec.place_key not in seen:
-                    seen.add(rec.place_key)
-                    new.append(rec)
-            store.append_directory(new)
-            store.append_progress({**q, "found": len(records),
-                                   "added": len(new), "scraped_at": stamp})
+            consecutive_failures = 0
             summary["queries_done"] += 1
             summary["found"] += len(records)
             summary["added"] += len(new)

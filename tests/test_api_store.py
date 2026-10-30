@@ -63,3 +63,37 @@ class TestApiStoreE2E(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFlakyEndpoint(unittest.TestCase):
+    """Apps Script intermittently answers HTML instead of JSON (the
+    production killer from the run logs). The client must retry and the
+    data must still land exactly once."""
+
+    @classmethod
+    def setUpClass(cls):
+        import mapscout.api_store as api_store
+        api_store.RETRY_DELAYS = (0, 0.1, 0.2)
+        cls.state = ApiState()
+        cls.state.flaky_gets = 1
+        cls.state.flaky_posts = 2
+        cls.api = make_server(cls.state)
+        cls.api_port = cls.api.server_address[1]
+        threading.Thread(target=cls.api.serve_forever, daemon=True).start()
+        cls.maps = maps_serve()
+        cls.maps_port = cls.maps.server_address[1]
+        threading.Thread(target=cls.maps.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.api.shutdown()
+        cls.maps.shutdown()
+
+    def test_run_survives_flaky_endpoint(self):
+        cfg = ScrapeConfig(delay_seconds=0.05,
+                           base_url=f"http://127.0.0.1:{self.maps_port}/maps")
+        store = ApiStore(f"http://127.0.0.1:{self.api_port}/exec", TOKEN)
+        s = run_sheet(store, QUERIES, cfg, log=lambda *a: None)
+        self.assertEqual(s["added"], 3)
+        self.assertEqual(len(self.state.directory), 3)
+        self.assertEqual(len(self.state.progress), 2)

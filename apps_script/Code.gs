@@ -66,6 +66,19 @@ function doPost(e) {
     var prog = tab_(PROGRESS_SHEET, PROGRESS_HEADERS);
     var d = body.directory || [];
     var p = body.progress || [];
+    // Server-side dedupe: a retried POST must never duplicate rows.
+    var pkCol = DIRECTORY_HEADERS.indexOf("place_key");
+    var existingKeys = {};
+    columnValues_(dir, pkCol + 1).forEach(function (k) { existingKeys[k] = 1; });
+    d = d.filter(function (row) {
+      var k = row[pkCol];
+      if (k && existingKeys[k]) return false;
+      existingKeys[k] = 1;
+      return true;
+    });
+    var existingDone = {};
+    columnValues_(prog, 1).forEach(function (k) { existingDone[k] = 1; });
+    p = p.filter(function (row) { return !existingDone[row[0]]; });
     if (d.length) {
       dir.getRange(dir.getLastRow() + 1, 1, d.length, DIRECTORY_HEADERS.length).setValues(d);
     }

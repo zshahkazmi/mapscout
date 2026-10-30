@@ -16,6 +16,8 @@ class ApiState:
     def __init__(self):
         self.directory = []   # rows (lists)
         self.progress = []    # rows (lists)
+        self.flaky_gets = 0   # next N GETs answer an HTML error page
+        self.flaky_posts = 0  # next N POSTs answer an HTML error page
 
 
 def make_server(state: ApiState) -> ThreadingHTTPServer:
@@ -31,7 +33,18 @@ def make_server(state: ApiState) -> ThreadingHTTPServer:
             self.end_headers()
             self.wfile.write(data)
 
+        def _html_error(self):
+            data = b"<html><body>Service error</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self):
+            if state.flaky_gets > 0:
+                state.flaky_gets -= 1
+                return self._html_error()
             q = parse_qs(urlparse(self.path).query)
             if q.get("token", [""])[0] != TOKEN:
                 return self._json({"ok": False, "error": "bad token"})
@@ -51,6 +64,9 @@ def make_server(state: ApiState) -> ThreadingHTTPServer:
                 self.end_headers()
                 return
             if path == "/usercontent":
+                if state.flaky_posts > 0:
+                    state.flaky_posts -= 1
+                    return self._html_error()
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if body.get("token") != TOKEN:
                     return self._json({"ok": False, "error": "bad token"})

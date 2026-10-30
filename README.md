@@ -28,9 +28,12 @@ hours, maps_url, place_key, query, locality, niche, scraped_at`
 1. **Local CSV** — `scrape` writes a CSV + a JSON state file.
 2. **Google Sheet** — `sheet-run` writes to a shared spreadsheet with two
    tabs: `Directory` (businesses) and `Progress` (one row per completed
-   query = the resumable state). Access is via a Google **service
-   account** whose JSON key you keep in a secret; share the sheet with
-   the service account's email as Editor.
+   query = the resumable state). Two access routes:
+   - **Apps Script endpoint** (no Google Cloud needed): paste
+     `apps_script/Code.gs` into the sheet's Apps Script editor, deploy it
+     as a web app, and give mapscout its URL + a shared token.
+   - **Service account**: a Google service-account JSON key; share the
+     sheet with the service account's email as Editor.
 
 ## Usage
 
@@ -44,15 +47,18 @@ python -m mapscout make-queries -o queries.csv --min-population 5000
 # scrape into a local CSV (resumable)
 python -m mapscout scrape --queries queries.csv -o directory.csv
 
-# scrape into a Google Sheet (needs requirements-sheet.txt + a key)
+# scrape into a Google Sheet (needs requirements-sheet.txt)
 pip install -r requirements-sheet.txt
+# via the Apps Script endpoint:
+python -m mapscout sheet-run --api-url <WEB_APP_URL> --api-token <TOKEN> --max-queries 20
+# or via a service account:
 python -m mapscout sheet-run --sheet-id <SPREADSHEET_ID> --sa-key key.json --max-queries 20
 ```
 
 ## Scheduled runs (GitHub Actions)
 
 `.github/workflows/scrape.yml` runs every 4 hours (and on demand) with
-two repository secrets: `GOOGLE_SA_KEY_JSON` and `DIRECTORY_SHEET_ID`.
+two repository secrets: `MAPSCOUT_API_URL` and `MAPSCOUT_API_TOKEN`.
 A concurrency lock prevents overlapping runs from double-processing.
 
 ## Tests

@@ -65,11 +65,20 @@ def cmd_make_queries(args) -> int:
 
 
 def cmd_sheet_run(args) -> int:
-    from .sheet import SheetStore, run_sheet
+    from .sheet import run_sheet
     niches = load_niches(Path(args.niches))
     queries = generate_queries(Path(args.localities), niches,
                                  min_population=args.min_population)
-    store = SheetStore(args.sa_key, args.sheet_id)
+    if args.api_url:
+        from .api_store import ApiStore
+        store = ApiStore(args.api_url, args.api_token)
+    elif args.sa_key and args.sheet_id:
+        from .sheet import SheetStore
+        store = SheetStore(args.sa_key, args.sheet_id)
+    else:
+        print("sheet-run needs either --api-url/--api-token or "
+              "--sa-key/--sheet-id", file=sys.stderr)
+        return 2
     summary = run_sheet(store, queries, _cfg(args), max_queries=args.max_queries)
     print(f"done: {summary}")
     return 3 if summary["blocked"] else 0
@@ -102,8 +111,10 @@ def main(argv=None) -> int:
     sp.set_defaults(fn=cmd_make_queries)
 
     sp = sub.add_parser("sheet-run", help="scrape into a Google Sheet (state = Progress tab)")
-    sp.add_argument("--sheet-id", required=True)
-    sp.add_argument("--sa-key", required=True, help="service account JSON key file")
+    sp.add_argument("--sheet-id", help="spreadsheet ID (service-account mode)")
+    sp.add_argument("--sa-key", help="service account JSON key file")
+    sp.add_argument("--api-url", help="Apps Script web app URL (API mode)")
+    sp.add_argument("--api-token", help="shared token for the Apps Script endpoint")
     sp.add_argument("--localities", default=str(DATA_DIR / "localities_gb.csv"))
     sp.add_argument("--niches", default=str(DATA_DIR / "niches.txt"))
     sp.add_argument("--min-population", type=int, default=0)

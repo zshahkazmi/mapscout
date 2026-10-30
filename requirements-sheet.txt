@@ -1,2 +1,3 @@
 -r requirements.txt
 gspread>=6.0
+requests>=2.31

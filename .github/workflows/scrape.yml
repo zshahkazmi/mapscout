@@ -1,0 +1,68 @@
+name: Directory scrape (scheduled)
+
+# Slow, resumable Google Maps scraping into the UK Automotive Directory
+# sheet. Runs every 4 hours and on demand. State lives in the sheet's
+# Progress tab, so every run continues where the last one stopped. If
+# Google blocks a run, it stops cleanly (exit 3 -> treated as OK) and the
+# next scheduled run resumes.
+#
+# One-time setup in this repo (Settings -> Secrets and variables -> Actions):
+#   GOOGLE_SA_KEY_JSON   full contents of the Google service-account JSON key
+#   DIRECTORY_SHEET_ID   the spreadsheet ID of the directory sheet
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      max_queries:
+        description: "Queries to process this run"
+        type: string
+        default: "20"
+      min_population:
+        description: "Skip localities below this population"
+        type: string
+        default: "0"
+
+concurrency:
+  group: mapscout-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies + Chromium
+        run: |
+          pip install -r requirements.txt -r requirements-sheet.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Write service-account key from secret
+        env:
+          GOOGLE_SA_KEY_JSON: ${{ secrets.GOOGLE_SA_KEY_JSON }}
+        run: printf '%s' "$GOOGLE_SA_KEY_JSON" > sa-key.json
+
+      - name: Scrape next chunk into the sheet
+        env:
+          DIRECTORY_SHEET_ID: ${{ secrets.DIRECTORY_SHEET_ID }}
+        run: |
+          set +e
+          python -m mapscout sheet-run \
+            --sheet-id "$DIRECTORY_SHEET_ID" \
+            --sa-key sa-key.json \
+            --max-queries "${{ inputs.max_queries || '20' }}" \
+            --min-population "${{ inputs.min_population || '0' }}" \
+            --delay 4
+          code=$?
+          if [ $code -eq 3 ]; then
+            echo "Stopped early on a Google block - progress saved; the next run resumes."
+            exit 0
+          fi
+          exit $code

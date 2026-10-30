@@ -7,4 +7,4 @@ progress after every query, dedupes by the place's stable Maps feature id,
 and stops cleanly when Google shows a block page instead of solving it.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"

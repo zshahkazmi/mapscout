@@ -5,22 +5,24 @@ append_directory / append_progress), so run_sheet works unchanged.
 Directory rows are buffered and flushed together with the progress entry
 for each query — one POST per query.
 
-Apps Script quirks handled here:
-- POSTs are answered with a 302 redirect to a one-time googleusercontent
-  URL; plain redirect following would downgrade the POST to a GET and
-  lose the body, so the redirect is followed manually.
-- The Apps Script frontend intermittently answers with an HTML error
-  page instead of the script's JSON (observed in production: an
-  unretried r.json() crash was the runs' main killer). Every call is
-  therefore retried with backoff until a real JSON reply arrives, and
-  failures report the HTTP status and a body snippet.
+Apps Script mechanics (learned the hard way, from production logs):
+the script executes on the FIRST request; the /exec URL then answers
+with a 302 redirect to a one-time "echo" URL that serves the script's
+JSON result to a GET. The echo URL rejects POSTs with HTTP 405 — so the
+redirect must be followed the standard way (POST -> 302 -> GET), which
+is exactly what requests does by default. Re-POSTing the body to the
+echo URL was this project's costliest bug: the sheet write succeeded
+server-side while the client died on the 405 page, killing every run
+after exactly one query.
+
+The Apps Script frontend can also intermittently answer with an HTML
+error page, so every call is retried with backoff until a real JSON
+reply arrives; failures report the HTTP status and a body snippet.
 """
 
 from __future__ import annotations
 
-import json
 import time
-from urllib.parse import urljoin
 
 from .scrape import Record
 from .sheet import record_row
@@ -58,11 +60,10 @@ class ApiStore:
 
     def _post_once(self, payload: dict) -> dict:
         import requests  # lazy
-        r = requests.post(self.url, json=payload, timeout=180,
-                          allow_redirects=False)
-        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
-            r = requests.post(urljoin(self.url, r.headers["Location"]),
-                              json=payload, timeout=180)
+        # Default redirect handling is REQUIRED: Apps Script executes on
+        # this POST, then 302-redirects to a one-time echo URL that
+        # serves the JSON result to the follow-up GET.
+        r = requests.post(self.url, json=payload, timeout=180)
         data = self._parse(r, "directory API append")
         if not data.get("ok"):
             raise RuntimeError(f"directory API append error: {data}")
@@ -70,16 +71,15 @@ class ApiStore:
 
     def _with_retries(self, fn, what: str):
         last_exc: Exception | None = None
-        for delay in RETRY_DELAYS:
+        for attempt, delay in enumerate(RETRY_DELAYS):
             if delay:
                 time.sleep(delay)
             try:
                 return fn()
             except Exception as e:  # transport errors + RuntimeError above
                 last_exc = e
-                print(f"{what} failed ({type(e).__name__}: {e}); "
-                      "retrying..." if delay != RETRY_DELAYS[-1] else
-                      f"{what} failed ({type(e).__name__}: {e})")
+                if attempt < len(RETRY_DELAYS) - 1:
+                    print(f"{what} failed ({type(e).__name__}: {e}); retrying...")
         raise RuntimeError(f"{what}: giving up after {len(RETRY_DELAYS)} "
                            f"attempts: {last_exc}")
 

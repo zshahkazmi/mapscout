@@ -1,14 +1,15 @@
 name: Directory scrape (scheduled)
 
 # Slow, resumable Google Maps scraping into the UK Automotive Directory
-# sheet. Runs every 4 hours and on demand. State lives in the sheet's
-# Progress tab, so every run continues where the last one stopped. If
-# Google blocks a run, it stops cleanly (exit 3 -> treated as OK) and the
-# next scheduled run resumes.
+# sheet, via the sheet's Apps Script web app (no Google Cloud needed).
+# Runs every 4 hours and on demand. State lives in the sheet's Progress
+# tab (read through the endpoint), so every run continues where the last
+# one stopped. If Google blocks a run, it stops cleanly (exit 3 ->
+# treated as OK) and the next scheduled run resumes.
 #
 # One-time setup in this repo (Settings -> Secrets and variables -> Actions):
-#   GOOGLE_SA_KEY_JSON   full contents of the Google service-account JSON key
-#   DIRECTORY_SHEET_ID   the spreadsheet ID of the directory sheet
+#   MAPSCOUT_API_URL     the Apps Script web app URL (ends in /exec)
+#   MAPSCOUT_API_TOKEN   the token set at the top of Code.gs
 
 on:
   schedule:
@@ -44,19 +45,15 @@ jobs:
           pip install -r requirements.txt -r requirements-sheet.txt
           python -m playwright install --with-deps chromium
 
-      - name: Write service-account key from secret
-        env:
-          GOOGLE_SA_KEY_JSON: ${{ secrets.GOOGLE_SA_KEY_JSON }}
-        run: printf '%s' "$GOOGLE_SA_KEY_JSON" > sa-key.json
-
       - name: Scrape next chunk into the sheet
         env:
-          DIRECTORY_SHEET_ID: ${{ secrets.DIRECTORY_SHEET_ID }}
+          MAPSCOUT_API_URL: ${{ secrets.MAPSCOUT_API_URL }}
+          MAPSCOUT_API_TOKEN: ${{ secrets.MAPSCOUT_API_TOKEN }}
         run: |
           set +e
           python -m mapscout sheet-run \
-            --sheet-id "$DIRECTORY_SHEET_ID" \
-            --sa-key sa-key.json \
+            --api-url "$MAPSCOUT_API_URL" \
+            --api-token "$MAPSCOUT_API_TOKEN" \
             --max-queries "${{ inputs.max_queries || '20' }}" \
             --min-population "${{ inputs.min_population || '0' }}" \
             --delay 4

@@ -116,6 +116,14 @@ def run_sheet(store: SheetStore, queries: list[dict], cfg: ScrapeConfig,
                     "the next scheduled run resumes.")
                 summary["blocked"] = True
                 break
+            except Exception as e:
+                summary["failed"] = summary.get("failed", 0) + 1
+                log(f"ERROR during '{q['query']}': {type(e).__name__}: {e} — "
+                    "query NOT marked done; continuing with the next one.")
+                if summary["failed"] >= 3 and summary["queries_done"] == 0:
+                    log("3 failures before any success — stopping the run.")
+                    break
+                continue
             new = []
             for rec in records:
                 rec.query = q["query"]

@@ -42,16 +42,17 @@ def _search_html(origin: str) -> str:
 
 
 def _panel_html(p: dict) -> str:
-    phone = (f'<button data-item-id="phone:tel:+44"><span>{p["phone"]}</span></button>'
+    phone = (f'<button data-item-id="phone:tel:+44"><span>\ue0b0\n{p["phone"]}</span></button>'
              if p["phone"] else "")
     site = (f'<a data-item-id="authority" href="{p["website"]}">{p["website"]}</a>'
             if p["website"] else "")
     return f"""<html><body>
 <h1>{p['name']}</h1>
 <button jsaction="pane.rating.category">{p['category']}</button>
+<div class="F7nice"><span>{p['rating']}</span><span>({p['reviews']})</span></div>
 <div role="img" aria-label="{p['rating']} stars"></div>
 <div role="img" aria-label="{p['reviews']} reviews"></div>
-<button data-item-id="address"><span>{p['address']}</span></button>
+<button data-item-id="address"><span>\ue0c8\n{p['address']}</span></button>
 {phone}{site}
 <button data-item-id="hours" aria-label="{p['hours']}"></button>
 </body></html>"""

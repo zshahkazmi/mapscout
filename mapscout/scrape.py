@@ -75,20 +75,37 @@ def fallback_key(name: str, postcode: str, phone: str) -> str:
     return f"{base}|{(postcode or '').upper()}|{re.sub(r'[^0-9]+', '', phone or '')}"
 
 
+ICON_CHARS = re.compile(r"[\ue000-\uf8ff\u200b\ufeff]")
+
+
+def clean_text(text: str) -> str:
+    """Strip Google Maps icon-font glyphs and tidy whitespace."""
+    t = ICON_CHARS.sub("", text or "")
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    return " ".join(lines).strip()
+
+
 def postcode_from_address(address: str) -> str:
     m = POSTCODE_RE.search((address or "").upper())
     return m.group(1) if m else ""
 
 
 def town_from_address(address: str, postcode: str) -> str:
-    """Best-effort town: the comma-part just before the postcode part."""
+    """Town = text sharing the postcode's comma-part ('London SE8 5HD'
+    -> 'London'); if the postcode stands alone, the part before it."""
     if not address:
         return ""
     parts = [p.strip() for p in address.split(",") if p.strip()]
-    for i, p in enumerate(parts):
-        if postcode and postcode.split()[0] in p.upper():
-            return parts[i - 1] if i > 0 else ""
-    return parts[-2] if len(parts) >= 2 else ""
+    parts = [p for p in parts if p.lower() not in ("united kingdom", "uk")]
+    if postcode:
+        pc = re.compile(re.escape(postcode), re.IGNORECASE)
+        for i, p in enumerate(parts):
+            if pc.search(p):
+                rest = pc.sub("", p).strip(" ,")
+                if rest:
+                    return rest
+                return parts[i - 1] if i > 0 else ""
+    return parts[-1] if parts else ""
 
 
 def _env_proxy() -> dict | None:
@@ -177,7 +194,11 @@ class MapsScraper:
     # -- search + feed ---------------------------------------------------
     def search(self, query: str):
         url = f"{self.cfg.base_url}/search/{quote_plus(query)}"
-        self.page.goto(url, wait_until="domcontentloaded")
+        try:
+            self.page.goto(url, wait_until="domcontentloaded")
+        except PWTimeout:
+            self._pause(2)
+            self.page.goto(url, wait_until="domcontentloaded")
         self._pause()
         self._consent()
         self._check_blocked()
@@ -234,7 +255,7 @@ class MapsScraper:
         try:
             loc = self.page.locator(selector)
             if loc.count():
-                return (loc.first.inner_text(timeout=2500) or "").strip()
+                return clean_text(loc.first.inner_text(timeout=2500) or "")
         except Exception:
             pass
         return ""
@@ -277,13 +298,22 @@ class MapsScraper:
         m = re.search(r"([\d,]+)\s*reviews?", aria)
         if m:
             rec.reviews = m.group(1).replace(",", "")
+        if not rec.reviews:
+            row_text = self._text("div.F7nice") or rating_row
+            m = re.search(r"\(([\d,]+)\)", row_text)
+            if m:
+                rec.reviews = m.group(1).replace(",", "")
         rec.address = self._text('button[data-item-id="address"]')
         rec.phone = self._text('button[data-item-id^="phone:tel:"]')
         rec.website = (self._attr('a[data-item-id="authority"]', "href")
                        or self._text('a[data-item-id="authority"]'))
         hours_lbl = (self._attr('button[data-item-id*="hours"]', "aria-label")
-                     or self._attr('div[data-item-id*="hours"]', "aria-label"))
-        rec.hours = re.sub(r"\s+", " ", hours_lbl).strip()
+                     or self._attr('div[data-item-id*="hours"]', "aria-label")
+                     or self._attr('button[aria-label*="Closes"]', "aria-label")
+                     or self._attr('button[aria-label*="Opens"]', "aria-label")
+                     or self._attr('div[aria-label*="Closes"]', "aria-label")
+                     or self._attr('div[aria-label*="Opens"]', "aria-label"))
+        rec.hours = re.sub(r"\s+", " ", clean_text(hours_lbl)).strip()
         if card_text:
             self._fill_from_card(rec, card_text)
         rec.postcode = postcode_from_address(rec.address)
@@ -297,10 +327,12 @@ class MapsScraper:
         lines = [ln.strip() for ln in card_text.splitlines() if ln.strip()]
         if not rec.name and lines:
             rec.name = lines[0]
-        if not rec.rating:
-            m = re.search(r"\b([0-5]\.[0-9])\s*\(([\d,]+)\)", card_text)
-            if m:
-                rec.rating, rec.reviews = m.group(1), m.group(2).replace(",", "")
+        m = re.search(r"\b([0-5]\.[0-9])\s*\(([\d,]+)\)", card_text)
+        if m:
+            if not rec.rating:
+                rec.rating = m.group(1)
+            if not rec.reviews:
+                rec.reviews = m.group(2).replace(",", "")
         if not rec.category and len(lines) > 1:
             for ln in lines[1:]:
                 if "·" in ln:
@@ -379,6 +411,14 @@ def run_queries(queries: list[dict], out_csv: Path, state_path: Path,
                 state["blocked"] = True
                 summary["blocked"] = True
                 break
+            except Exception as e:
+                summary["failed"] = summary.get("failed", 0) + 1
+                log(f"ERROR during '{q['query']}': {type(e).__name__}: {e} — "
+                    "query NOT marked done; continuing with the next one.")
+                if summary["failed"] >= 3 and summary["queries_done"] == 0:
+                    log("3 failures before any success — stopping the run.")
+                    break
+                continue
             new = []
             for rec in records:
                 rec.query, rec.locality, rec.niche = q["query"], q.get("locality", ""), q.get("niche", "")

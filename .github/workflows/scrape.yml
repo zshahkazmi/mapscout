@@ -2,7 +2,9 @@ name: Directory scrape (scheduled)
 
 # Slow, resumable Google Maps scraping into the UK Automotive Directory
 # sheet, via the sheet's Apps Script web app (no Google Cloud needed).
-# Runs every 4 hours and on demand. State lives in the sheet's Progress
+# Runs around the clock (user decision 2026-11-01): a fresh run
+# starts every 3 hours and the concurrency lock queues it behind
+# the one still going, so scraping is effectively continuous. State lives in the sheet's Progress
 # tab (read through the endpoint), so every run continues where the last
 # one stopped. If Google blocks a run, it stops cleanly (exit 3 ->
 # treated as OK) and the next scheduled run resumes.
@@ -13,13 +15,13 @@ name: Directory scrape (scheduled)
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       max_queries:
         description: "Queries to process this run"
         type: string
-        default: "20"
+        default: "30"
       min_population:
         description: "Skip localities below this population"
         type: string
@@ -54,7 +56,7 @@ jobs:
           python -m mapscout sheet-run \
             --api-url "$MAPSCOUT_API_URL" \
             --api-token "$MAPSCOUT_API_TOKEN" \
-            --max-queries "${{ inputs.max_queries || '20' }}" \
+            --max-queries "${{ inputs.max_queries || '30' }}" \
             --min-population "${{ inputs.min_population || '0' }}" \
             --delay 4
           code=$?
